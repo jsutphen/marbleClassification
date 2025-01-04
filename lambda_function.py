@@ -5,6 +5,11 @@ import base64
 import boto3
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Ellipse
+import matplotlib.transforms as transforms
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+
 # Set MPLCONFIGDIR to /tmp/matplotlib
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
 
@@ -21,10 +26,59 @@ s3 = boto3.client('s3')
 
 # S3 bucket and CSV file details
 BUCKET_NAME = 'testousama'
-CSV_KEY = '1_DB_Basic_dec_24.csv'
+CSV_KEY = 'dataset.csv'
 
 # Initialize the dataframe as None; it will be loaded on the first invocation
 db = None
+
+def confidence_ellipse(x, y, ax, n_std=3.0, facecolor='none', **kwargs):
+    """
+    Create a plot of the covariance confidence ellipse of *x* and *y*.
+
+    Parameters
+    ----------
+    x, y : array-like, shape (n, )
+        Input data.
+    ax : matplotlib.axes.Axes
+        The Axes object to draw the ellipse into.
+    n_std : float
+        The number of standard deviations to determine the ellipse's radiuses.
+    facecolor : str
+        The face color of the ellipse.
+    **kwargs
+        Additional keyword arguments passed to Ellipse.
+
+    Returns
+    -------
+    matplotlib.patches.Ellipse
+    """
+    if x.size != y.size:
+        raise ValueError("x and y must be the same size")
+
+    cov = np.cov(x, y)
+    pearson = cov[0, 1] / np.sqrt(cov[0, 0] * cov[1, 1])
+
+    # Eigenvalues and eigenvectors for the covariance matrix
+    ell_radius_x = np.sqrt(1 + pearson)
+    ell_radius_y = np.sqrt(1 - pearson)
+    ellipse = Ellipse((0, 0), width=ell_radius_x * 2, height=ell_radius_y * 2,
+                      facecolor=facecolor, **kwargs)
+
+    # Scale the ellipse to the desired number of standard deviations
+    scale_x = np.sqrt(cov[0, 0]) * n_std
+    scale_y = np.sqrt(cov[1, 1]) * n_std
+    mean_x = np.mean(x)
+    mean_y = np.mean(y)
+
+    # Calculate the transformation
+    transf = transforms.Affine2D() \
+        .rotate_deg(45) \
+        .scale(scale_x, scale_y) \
+        .translate(mean_x, mean_y)
+
+    ellipse.set_transform(transf + ax.transData)
+    return ax.add_patch(ellipse)
+
 
 def load_csv_from_s3():
     """
@@ -35,6 +89,7 @@ def load_csv_from_s3():
         response = s3.get_object(Bucket=BUCKET_NAME, Key=CSV_KEY)
         data = response['Body'].read().decode('utf-8')
         db = pd.read_csv(io.StringIO(data))
+        db = db.dropna(subset=['d18O', 'd13C', 'MARBLE GROUP'])
         print(f"Successfully loaded data from {BUCKET_NAME}/{CSV_KEY}")
     except Exception as e:
         print(f"Error loading CSV from S3: {e}")
@@ -92,17 +147,43 @@ def handler(event, context):
 
             # Plot data from CSV
             try:
-                classes = db["MARBLE GROUP basic"].unique()
-                colors = plt.get_cmap('tab10', len(classes))
+                test_values = [[i1, i2]]
+                classes = db["MARBLE GROUP"].unique()
+                X = np.column_stack((db["d18O"], db["d13C"]))
+                y = db["MARBLE GROUP"].values
+                clf = LinearDiscriminantAnalysis()
+                clf.fit(X, y)
+                predicted_class = clf.predict(test_values)[0]
+                probabilities = clf.predict_proba(test_values)[0]
+                # Identify the top three probabilities
+                top_n = 3
+                top_indices = np.argsort(probabilities)[::-1][:top_n]
+                top_classes = clf.classes_[top_indices]
+                top_probabilities = probabilities[top_indices]
+                db_top3 = db[db["MARBLE GROUP"].isin(top_classes)]
 
-                for idx, cls in enumerate(classes):
-                    subset = db[db["MARBLE GROUP basic"] == cls]
-                    ax.scatter(subset['d18O'], subset['d13C'], 
-                               color=colors(idx), 
-                               label=cls, 
-                               alpha=0.6, 
-                               edgecolors='w', 
-                               linewidth=0.5)
+                # 7. Start Plotting
+                fig, ax = plt.subplots(figsize=(10, 8))
+
+                # Assign colors to top three classes using 'tab10' colormap
+                colors = plt.get_cmap('tab10', len(top_classes))
+
+                # Scaling factor for the confidence ellipse (e.g., 95% confidence interval)
+                # For a 95% confidence interval in 2D, n_std ≈ sqrt(5.991)
+                n_std = np.sqrt(5.991)  # Adjust based on desired confidence level
+
+
+                for idx, cls in enumerate(top_classes):
+                    subset = db_top3[db_top3["MARBLE GROUP"] == cls]
+                    x = subset['d18O']
+                    y = subset['d13C']
+
+                    # Scatter plot for the current class
+                    ax.scatter(x, y, alpha=0.6, label=cls, color=colors(idx))
+
+                    # Add confidence ellipse for the current class
+                    confidence_ellipse(x, y, ax, n_std=n_std, edgecolor=colors(idx), linewidth=2)
+
             except KeyError as e:
                 response_body = {
                     'message': f'Missing expected column in CSV: {e}'
@@ -114,16 +195,20 @@ def handler(event, context):
                 }
 
             # Plot the API inputs i1 and i2
-            ax.scatter([i1], [i2], color='red', label='API Inputs', edgecolors='k', s=100)
-            ax.annotate(f'i1 = {i1}', (i1, i1), textcoords="offset points", xytext=(0,10), ha='center', color='red')
-            ax.annotate(f'i2 = {i2}', (i2, i2), textcoords="offset points", xytext=(0,10), ha='center', color='red')
+            ax.scatter([i1], [i2], color='red', edgecolors='k')
 
             # Set labels and title
             ax.set_xlabel('i1')
             ax.set_ylabel('i2')
-            ax.set_title('Scatterplot of CSV Data with API Inputs')
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')  # Place legend outside the plot
-            plt.tight_layout()
+            ax.legend(title='MARBLE GROUP', fontsize=10, title_fontsize=12)
+            prob_text = "\n".join([f"{cls}: {prob * 100:.2f}%" for cls, prob in zip(top_classes, top_probabilities)])
+            annotation_text = f"Predicted Class: {predicted_class}\nTop 3 Probabilities:\n{prob_text}"
+            props = dict(boxstyle='round', facecolor='white', alpha=0.8)
+            ax.text(0.05, 0.95, annotation_text, transform=ax.transAxes, fontsize=10,
+                    verticalalignment='top', bbox=props)
+
+            # Enhance grid for better readability
+            ax.grid(True, linestyle='--', alpha=0.5)
 
             # Save the plot to a BytesIO object
             img_io = io.BytesIO()
