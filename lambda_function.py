@@ -210,6 +210,11 @@ def handler(event, context):
             # Enhance grid for better readability
             ax.grid(True, linestyle='--', alpha=0.5)
 
+            # Watermark
+            ax.text(0.5, 0.5, 'Team 41', transform=ax.transAxes,
+                    fontsize=40, color='gray', alpha=0.5,
+                    ha='center', va='center')
+
             # Save the plot to a BytesIO object
             img_io = io.BytesIO()
             fig.savefig(img_io, format='png', bbox_inches='tight')
