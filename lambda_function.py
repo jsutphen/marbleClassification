@@ -27,6 +27,8 @@ s3 = boto3.client('s3')
 # S3 bucket and CSV file details
 BUCKET_NAME = 'marbleisotopes'
 CSV_KEY = 'dataset.csv'
+# Key for saving the top 3 classes
+TOP_CLASSES_KEY = 'top_classes.json'
 
 # Initialize the dataframe as None; it will be loaded on the first invocation
 db = None
@@ -96,6 +98,45 @@ def load_csv_from_s3():
         print(f"Error loading CSV from S3: {e}")
         db = None
 
+
+def save_top_classes_to_s3(top_classes, top_probabilities):
+    """
+    Save the top 3 classes and their probabilities to S3 as a JSON object.
+    """
+    top_classes_data = {
+        'top_classes': top_classes.tolist(),
+        'top_probabilities': top_probabilities.tolist()
+    }
+
+    try:
+        s3.put_object(
+            Bucket=BUCKET_NAME,
+            Key=TOP_CLASSES_KEY,
+            Body=json.dumps(top_classes_data),
+            ContentType='application/json'
+        )
+        print(f"Top 3 classes saved to S3 at {TOP_CLASSES_KEY}")
+    except Exception as e:
+        print(f"Error saving top classes to S3: {e}")
+
+
+def load_top_classes_from_s3():
+    """
+    Load the top 3 classes and their probabilities from S3.
+    """
+    try:
+        response = s3.get_object(Bucket=BUCKET_NAME, Key=TOP_CLASSES_KEY)
+        top_classes_data = json.loads(response['Body'].read().decode('utf-8'))
+        top_classes = np.array(top_classes_data['top_classes'])
+        top_probabilities = np.array(top_classes_data['top_probabilities'])
+        print(f"Top 3 classes loaded from S3")
+        
+        return top_classes, top_probabilities
+    except Exception as e:
+        print(f"Error loading top classes from S3: {e}")
+        return None, None
+
+
 def handler(event, context):
     global db
     # Extract query string parameters from the event
@@ -161,6 +202,10 @@ def handler(event, context):
                 top_indices = np.argsort(probabilities)[::-1][:top_n]
                 top_classes = clf.classes_[top_indices]
                 top_probabilities = probabilities[top_indices]
+                
+                # Save the top classes and probabilities to S3
+                save_top_classes_to_s3(top_classes, top_probabilities)
+
                 db_top3 = filtered_db[filtered_db["MARBLE GROUP"].isin(top_classes)]
 
                 # 7. Start Plotting
@@ -264,12 +309,22 @@ def handler(event, context):
                 'body': json.dumps(response_body)
             }
 
-        # Example classification logic
-        group = "CARRARA" if i1_val < i2_val else "PANTELIKON"
+        # Retrieve the top 3 classes and probabilities (maybe will use later) from S3 if they were saved
+        top_classes, top_probabilities = load_top_classes_from_s3()
         
-        # Return the marble classification group
+        if top_classes is None or top_probabilities is None:
+            response_body = {
+                'message': 'Top classes not found in S3.'
+            }
+            return {
+                'statusCode': 404,
+                'headers': headers,
+                'body': json.dumps(response_body)
+            } 
+        
+        # Return the most probable marble classification group
         response_body = {
-            'message': f'MARBLE CLASSIFICATION {group}',
+            'message': f'MARBLE CLASSIFICATION {top_classes[0]}',
         }
 
         return {
