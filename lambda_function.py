@@ -312,6 +312,7 @@ def handler(event, context):
         # Retrieve the top 3 classes and probabilities (maybe will use later) from S3 if they were saved
         top_classes, top_probabilities = load_top_classes_from_s3()
         
+        # A guard for saving / loading bugs
         if top_classes is None or top_probabilities is None:
             response_body = {
                 'message': 'Top classes not found in S3.'
@@ -322,6 +323,18 @@ def handler(event, context):
                 'body': json.dumps(response_body)
             } 
         
+        # Domain Knowledge: If relative probability is less than 60%, then we can't classify it
+        elif top_probabilities[0] < 60:
+            response_body = {
+                'message': f'Classification Unknown: {top_probabilities[0]}% < 60%',
+            }
+            return {
+                'statusCode': 404,
+                'headers': headers,
+                'body': json.dumps(response_body)
+            } 
+
+
         # Return the most probable marble classification group
         response_body = {
             'message': f'MARBLE CLASSIFICATION {top_classes[0]}',
