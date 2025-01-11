@@ -25,7 +25,7 @@ import matplotlib.transforms as transforms
 s3 = boto3.client('s3')
 
 # S3 bucket and CSV file details
-BUCKET_NAME = 'testousama'
+BUCKET_NAME = 'marbleisotopes'
 CSV_KEY = 'dataset.csv'
 
 # Initialize the dataframe as None; it will be loaded on the first invocation
@@ -85,6 +85,7 @@ def load_csv_from_s3():
     Loads the CSV file from S3 and returns a pandas DataFrame.
     """
     global db
+    global items
     try:
         response = s3.get_object(Bucket=BUCKET_NAME, Key=CSV_KEY)
         data = response['Body'].read().decode('utf-8')
@@ -95,12 +96,8 @@ def load_csv_from_s3():
         print(f"Error loading CSV from S3: {e}")
         db = None
 
-# Load the CSV data once when the Lambda container is initialized
-load_csv_from_s3()
-
 def handler(event, context):
     global db
-
     # Extract query string parameters from the event
     query_params = event.get('queryStringParameters', {}) or {}
 
@@ -128,7 +125,8 @@ def handler(event, context):
                     'headers': headers,
                     'body': json.dumps(response_body)
                 }
-
+            items_str = query_params.get('items', '')
+            items = items_str.split(',') if items_str else []
             # Reload the CSV if not already loaded
             if db is None:
                 load_csv_from_s3()
@@ -141,16 +139,19 @@ def handler(event, context):
                         'headers': headers,
                         'body': json.dumps(response_body)
                     }
-
+            if items:
+                filtered_db = db[db["MARBLE GROUP"].isin(items)]
+            else:
+                filtered_db = db.copy()  # If no items specified, use the entire dataset
             # Begin plotting
             fig, ax = plt.subplots(figsize=(8, 6))
 
             # Plot data from CSV
             try:
                 test_values = [[i1, i2]]
-                classes = db["MARBLE GROUP"].unique()
-                X = np.column_stack((db["d18O"], db["d13C"]))
-                y = db["MARBLE GROUP"].values
+                classes = filtered_db["MARBLE GROUP"].unique()
+                X = np.column_stack((filtered_db["d18O"], filtered_db["d13C"]))
+                y = filtered_db["MARBLE GROUP"].values
                 clf = LinearDiscriminantAnalysis()
                 clf.fit(X, y)
                 predicted_class = clf.predict(test_values)[0]
@@ -160,7 +161,7 @@ def handler(event, context):
                 top_indices = np.argsort(probabilities)[::-1][:top_n]
                 top_classes = clf.classes_[top_indices]
                 top_probabilities = probabilities[top_indices]
-                db_top3 = db[db["MARBLE GROUP"].isin(top_classes)]
+                db_top3 = filtered_db[filtered_db["MARBLE GROUP"].isin(top_classes)]
 
                 # 7. Start Plotting
                 fig, ax = plt.subplots(figsize=(10, 8))
@@ -209,12 +210,10 @@ def handler(event, context):
 
             # Enhance grid for better readability
             ax.grid(True, linestyle='--', alpha=0.5)
-
             # Watermark
             ax.text(0.5, 0.5, 'Team 41', transform=ax.transAxes,
                     fontsize=40, color='gray', alpha=0.5,
                     ha='center', va='center')
-
             # Save the plot to a BytesIO object
             img_io = io.BytesIO()
             fig.savefig(img_io, format='png', bbox_inches='tight')
