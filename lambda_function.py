@@ -329,7 +329,7 @@ def handler(event, context):
                 'message': f'Classification Unknown: {top_probabilities[0]}% < 60%',
             }
             return {
-                'statusCode': 404,
+                'statusCode': 200,
                 'headers': headers,
                 'body': json.dumps(response_body)
             } 
