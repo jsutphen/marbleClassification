@@ -99,44 +99,6 @@ def load_csv_from_s3():
         db = None
 
 
-def save_top_classes_to_s3(top_classes, top_probabilities):
-    """
-    Save the top 3 classes and their probabilities to S3 as a JSON object.
-    """
-    top_classes_data = {
-        'top_classes': top_classes.tolist(),
-        'top_probabilities': top_probabilities.tolist()
-    }
-
-    try:
-        s3.put_object(
-            Bucket=BUCKET_NAME,
-            Key=TOP_CLASSES_KEY,
-            Body=json.dumps(top_classes_data),
-            ContentType='application/json'
-        )
-        print(f"Top 3 classes saved to S3 at {TOP_CLASSES_KEY}")
-    except Exception as e:
-        print(f"Error saving top classes to S3: {e}")
-
-
-def load_top_classes_from_s3():
-    """
-    Load the top 3 classes and their probabilities from S3.
-    """
-    try:
-        response = s3.get_object(Bucket=BUCKET_NAME, Key=TOP_CLASSES_KEY)
-        top_classes_data = json.loads(response['Body'].read().decode('utf-8'))
-        top_classes = np.array(top_classes_data['top_classes'])
-        top_probabilities = np.array(top_classes_data['top_probabilities'])
-        print(f"Top 3 classes loaded from S3")
-        
-        return top_classes, top_probabilities
-    except Exception as e:
-        print(f"Error loading top classes from S3: {e}")
-        return None, None
-
-
 def handler(event, context):
     global db
     # Extract query string parameters from the event
@@ -202,9 +164,6 @@ def handler(event, context):
                 top_indices = np.argsort(probabilities)[::-1][:top_n]
                 top_classes = clf.classes_[top_indices]
                 top_probabilities = probabilities[top_indices]
-                
-                # Save the top classes and probabilities to S3
-                save_top_classes_to_s3(top_classes, top_probabilities)
 
                 db_top3 = filtered_db[filtered_db["MARBLE GROUP basic"].isin(top_classes)]
 
@@ -268,9 +227,11 @@ def handler(event, context):
             # Convert the image to a base64 string
             img_base64 = base64.b64encode(img_io.getvalue()).decode('utf-8')
 
-            # Prepare the response body with the base64-encoded image
+            # Prepare the response body with the base64-encoded image, top classes and their probabilities
             response_body = {
                 'image': img_base64,
+                'classes': top_classes.tolist(), # Use tolist() to make it more compatible with json
+                'probabilities': top_probabilities.tolist() # Used in frontend to calculate if top probability is >= 60%
             }
 
             # Return the response with proxy integration support
@@ -290,63 +251,8 @@ def handler(event, context):
                 'body': json.dumps(response_body)
             }
     
-    # Check if both 'i1' and 'i2' are present but 'getImage' is not
-    if 'i1' in query_params and 'i2' in query_params:
-        i1 = query_params['i1']
-        i2 = query_params['i2']
-        
-        # Logic to classify based on i1 and i2
-        try:
-            i1_val = float(i1)
-            i2_val = float(i2)
-        except ValueError:
-            response_body = {
-                'message': '"i1" and "i2" must be valid numbers.'
-            }
-            return {
-                'statusCode': 400,
-                'headers': headers,
-                'body': json.dumps(response_body)
-            }
-
-        # Retrieve the top 3 classes and probabilities (maybe will use later) from S3 if they were saved
-        top_classes, top_probabilities = load_top_classes_from_s3()
-        
-        # A guard for saving / loading bugs
-        if top_classes is None or top_probabilities is None:
-            response_body = {
-                'message': 'Top classes not found in S3.'
-            }
-            return {
-                'statusCode': 404,
-                'headers': headers,
-                'body': json.dumps(response_body)
-            } 
-        
-        # Domain Knowledge: If relative probability is less than 60%, then we can't classify it
-        elif top_probabilities[0] < 60:
-            response_body = {
-                'message': f'Classification Unknown: {top_probabilities[0]}% < 60%',
-            }
-            return {
-                'statusCode': 200,
-                'headers': headers,
-                'body': json.dumps(response_body)
-            } 
-
-
-        # Return the most probable marble classification group
-        response_body = {
-            'message': f'MARBLE CLASSIFICATION {top_classes[0]}',
-        }
-
-        return {
-            'statusCode': 200,
-            'headers': headers,
-            'body': json.dumps(response_body)
-        }
-    
     # If neither 'getImage' nor 'i1' and 'i2' are present, return an error message
+    #---------------- Maybe needs a new guard? only if i1 and i2 are not present? ----------------#
     response_body = {
         'message': 'Missing required parameters. Provide "getImage" or "i1" and "i2" parameters.'
     }
