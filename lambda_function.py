@@ -92,7 +92,7 @@ def load_csv_from_s3():
         response = s3.get_object(Bucket=BUCKET_NAME, Key=CSV_KEY)
         data = response['Body'].read().decode('utf-8')
         db = pd.read_csv(io.StringIO(data))
-        db = db.dropna(subset=['d18O', 'd13C', 'MARBLE GROUP'])
+        db = db.dropna(subset=['d18O', 'd13C', 'MARBLE GROUP basic'])
         print(f"Successfully loaded data from {BUCKET_NAME}/{CSV_KEY}")
     except Exception as e:
         print(f"Error loading CSV from S3: {e}")
@@ -181,7 +181,7 @@ def handler(event, context):
                         'body': json.dumps(response_body)
                     }
             if items:
-                filtered_db = db[db["MARBLE GROUP"].isin(items)]
+                filtered_db = db[db["MARBLE GROUP basic"].isin(items)]
             else:
                 filtered_db = db.copy()  # If no items specified, use the entire dataset
             # Begin plotting
@@ -190,9 +190,9 @@ def handler(event, context):
             # Plot data from CSV
             try:
                 test_values = [[i1, i2]]
-                classes = filtered_db["MARBLE GROUP"].unique()
+                classes = filtered_db["MARBLE GROUP basic"].unique()
                 X = np.column_stack((filtered_db["d18O"], filtered_db["d13C"]))
-                y = filtered_db["MARBLE GROUP"].values
+                y = filtered_db["MARBLE GROUP basic"].values
                 clf = LinearDiscriminantAnalysis()
                 clf.fit(X, y)
                 predicted_class = clf.predict(test_values)[0]
@@ -206,7 +206,7 @@ def handler(event, context):
                 # Save the top classes and probabilities to S3
                 save_top_classes_to_s3(top_classes, top_probabilities)
 
-                db_top3 = filtered_db[filtered_db["MARBLE GROUP"].isin(top_classes)]
+                db_top3 = filtered_db[filtered_db["MARBLE GROUP basic"].isin(top_classes)]
 
                 # 7. Start Plotting
                 fig, ax = plt.subplots(figsize=(10, 8))
@@ -220,7 +220,7 @@ def handler(event, context):
 
 
                 for idx, cls in enumerate(top_classes):
-                    subset = db_top3[db_top3["MARBLE GROUP"] == cls]
+                    subset = db_top3[db_top3["MARBLE GROUP basic"] == cls]
                     x = subset['d18O']
                     y = subset['d13C']
 
