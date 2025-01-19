@@ -228,7 +228,7 @@ def handler(event, context):
                 'image': img_base64,
                 'classes': list(clf.classes_),
                 'probabilities': probabilities.tolist(),
-                'absolute': np.round(abs_prob*100, 2)
+                'absolute': np.round(abs_prob, 4)
             }
 
             return {
