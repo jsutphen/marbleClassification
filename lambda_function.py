@@ -5,10 +5,16 @@ import base64
 import boto3
 import pandas as pd
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
 import matplotlib.transforms as transforms
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from scipy.stats import chi2
+from scipy.spatial import distance
+
+# Use a non-interactive backend for matplotlib
+matplotlib.use('Agg')
 
 # Set MPLCONFIGDIR to /tmp/matplotlib
 os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
@@ -16,43 +22,34 @@ os.environ['MPLCONFIGDIR'] = '/tmp/matplotlib'
 # Create the directory if it doesn't exist
 os.makedirs('/tmp/matplotlib', exist_ok=True)
 
-import matplotlib.pyplot as plt
-from matplotlib.patches import Ellipse
-import matplotlib.transforms as transforms
-
-
 # Initialize the S3 client
 s3 = boto3.client('s3')
 
 # S3 bucket and CSV file details
 BUCKET_NAME = 'marbleisotopes'
 CSV_KEY = 'dataset.csv'
-# Key for saving the top 3 classes
-TOP_CLASSES_KEY = 'top_classes.json'
 
 # Initialize the dataframe as None; it will be loaded on the first invocation
 db = None
 
+def absolute_probability(x, y, sample):
+    '''
+    x: values of samples in x dimension
+    y: values of samples in y dimension
+    sample: two-dimensional data point, for which the abs. prob. will be computed
+
+    returns: the absolute probability, ranging from 1 exactly in the mean to close to 0 far away from the data
+    '''
+    mean = (np.mean(x), np.mean(y))
+    cov = np.cov(x, y)
+    inv_cov = np.linalg.inv(cov)
+    mahalanobis = distance.mahalanobis(sample, mean, inv_cov)
+    survival_prob = 1 - chi2.cdf(mahalanobis**2, df=2)
+    return survival_prob
+
 def confidence_ellipse(x, y, ax, n_std=3.0, facecolor='none', **kwargs):
     """
     Create a plot of the covariance confidence ellipse of *x* and *y*.
-
-    Parameters
-    ----------
-    x, y : array-like, shape (n, )
-        Input data.
-    ax : matplotlib.axes.Axes
-        The Axes object to draw the ellipse into.
-    n_std : float
-        The number of standard deviations to determine the ellipse's radiuses.
-    facecolor : str
-        The face color of the ellipse.
-    **kwargs
-        Additional keyword arguments passed to Ellipse.
-
-    Returns
-    -------
-    matplotlib.patches.Ellipse
     """
     if x.size != y.size:
         raise ValueError("x and y must be the same size")
@@ -63,8 +60,11 @@ def confidence_ellipse(x, y, ax, n_std=3.0, facecolor='none', **kwargs):
     # Eigenvalues and eigenvectors for the covariance matrix
     ell_radius_x = np.sqrt(1 + pearson)
     ell_radius_y = np.sqrt(1 - pearson)
-    ellipse = Ellipse((0, 0), width=ell_radius_x * 2, height=ell_radius_y * 2,
-                      facecolor=facecolor, **kwargs)
+    ellipse = Ellipse((0, 0),
+                      width=ell_radius_x * 2,
+                      height=ell_radius_y * 2,
+                      facecolor=facecolor,
+                      **kwargs)
 
     # Scale the ellipse to the desired number of standard deviations
     scale_x = np.sqrt(cov[0, 0]) * n_std
@@ -81,23 +81,21 @@ def confidence_ellipse(x, y, ax, n_std=3.0, facecolor='none', **kwargs):
     ellipse.set_transform(transf + ax.transData)
     return ax.add_patch(ellipse)
 
-
 def load_csv_from_s3():
     """
     Loads the CSV file from S3 and returns a pandas DataFrame.
     """
     global db
-    global items
     try:
         response = s3.get_object(Bucket=BUCKET_NAME, Key=CSV_KEY)
         data = response['Body'].read().decode('utf-8')
         db = pd.read_csv(io.StringIO(data))
-        db = db.dropna(subset=['d18O', 'd13C', 'MARBLE GROUP basic'])
+        db = db.dropna(subset=['d18O', 'd13C', 'MARBLE GROUP'])
         print(f"Successfully loaded data from {BUCKET_NAME}/{CSV_KEY}")
+        print(type(db))
     except Exception as e:
         print(f"Error loading CSV from S3: {e}")
         db = None
-
 
 def handler(event, context):
     global db
@@ -128,8 +126,10 @@ def handler(event, context):
                     'headers': headers,
                     'body': json.dumps(response_body)
                 }
+
             items_str = query_params.get('items', '')
             items = items_str.split(',') if items_str else []
+
             # Reload the CSV if not already loaded
             if db is None:
                 load_csv_from_s3()
@@ -142,104 +142,108 @@ def handler(event, context):
                         'headers': headers,
                         'body': json.dumps(response_body)
                     }
+
+            # Filter only the requested classes if specified, else use all data
             if items:
-                filtered_db = db[db["MARBLE GROUP basic"].isin(items)]
+                filtered_db = db[db["MARBLE GROUP"].isin(items)]
             else:
-                filtered_db = db.copy()  # If no items specified, use the entire dataset
-            # Begin plotting
-            fig, ax = plt.subplots(figsize=(8, 6))
+                filtered_db = db.copy()
 
-            # Plot data from CSV
-            try:
-                test_values = [[i1, i2]]
-                classes = filtered_db["MARBLE GROUP basic"].unique()
-                X = np.column_stack((filtered_db["d18O"], filtered_db["d13C"]))
-                y = filtered_db["MARBLE GROUP basic"].values
-                clf = LinearDiscriminantAnalysis()
-                clf.fit(X, y)
-                predicted_class = clf.predict(test_values)[0]
-                probabilities = clf.predict_proba(test_values)[0]
-                # Identify the top three probabilities
-                top_n = 3
-                top_indices = np.argsort(probabilities)[::-1][:top_n]
-                top_classes = clf.classes_[top_indices]
-                top_probabilities = probabilities[top_indices]
+            # Fit LDA to these classes
+            X = np.column_stack((filtered_db["d18O"], filtered_db["d13C"]))
+            y = filtered_db["MARBLE GROUP"].values
+            clf = LinearDiscriminantAnalysis()
+            clf.fit(X, y)
 
-                db_top3 = filtered_db[filtered_db["MARBLE GROUP basic"].isin(top_classes)]
+            # Perform prediction
+            test_values = [[i1, i2]]
+            predicted_class = clf.predict(test_values)[0]
+            probabilities = clf.predict_proba(test_values)[0]
 
-                # 7. Start Plotting
-                fig, ax = plt.subplots(figsize=(10, 8))
+            # Prepare to plot
+            fig, ax = plt.subplots(figsize=(10, 8))
+            colors = plt.get_cmap('tab10', len(clf.classes_))
 
-                # Assign colors to top three classes using 'tab10' colormap
-                colors = plt.get_cmap('tab10', len(top_classes))
+            # Scaling factor for the confidence ellipse
+            # For ~90% CI in 2D, n_std ~ sqrt(4.605)
+            # Adjust as needed
+            n_std = np.sqrt(4.605)
 
-                # Scaling factor for the confidence ellipse (e.g., 95% confidence interval)
-                # For a 95% confidence interval in 2D, n_std ≈ sqrt(5.991)
-                n_std = np.sqrt(5.991)  # Adjust based on desired confidence level
+            # Plot each class in the filtered set
+            for idx, cls in enumerate(clf.classes_):
+                print(cls)
+                subset = filtered_db[filtered_db["MARBLE GROUP"] == cls]
+                x = subset['d18O']
+                y = subset['d13C']
 
+                # Scatter
+                ax.scatter(x, y, alpha=0.6, label=cls, color=colors(idx))
 
-                for idx, cls in enumerate(top_classes):
-                    subset = db_top3[db_top3["MARBLE GROUP basic"] == cls]
-                    x = subset['d18O']
-                    y = subset['d13C']
+                # Confidence ellipse
+                confidence_ellipse(x, y, ax, n_std=n_std,
+                                   edgecolor=colors(idx), linewidth=2)
 
-                    # Scatter plot for the current class
-                    ax.scatter(x, y, alpha=0.6, label=cls, color=colors(idx))
-
-                    # Add confidence ellipse for the current class
-                    confidence_ellipse(x, y, ax, n_std=n_std, edgecolor=colors(idx), linewidth=2)
-
-            except KeyError as e:
-                response_body = {
-                    'message': f'Missing expected column in CSV: {e}'
-                }
-                return {
-                    'statusCode': 500,
-                    'headers': headers,
-                    'body': json.dumps(response_body)
-                }
-
-            # Plot the API inputs i1 and i2
+            # Plot the input point
             ax.scatter([i1], [i2], color='red', edgecolors='k')
 
-            # Set labels and title
-            ax.set_xlabel('i1')
-            ax.set_ylabel('i2')
-            ax.legend(title='MARBLE GROUP', fontsize=10, title_fontsize=12)
-            prob_text = "\n".join([f"{cls}: {prob * 100:.2f}%" for cls, prob in zip(top_classes, top_probabilities)])
-            annotation_text = f"Predicted Class: {predicted_class}\nTop 3 Probabilities:\n{prob_text}"
+            # Build annotation text (show predicted class + probability of each class)
+            prob_text = "\n".join(
+                [f"{cls}: {prob * 100:.2f}%" for cls, prob in zip(clf.classes_, probabilities)]
+            )
+            annotation_text = (
+                f"Predicted Class: {predicted_class}\n"
+                f"Probabilities:\n{prob_text}"
+            )
             props = dict(boxstyle='round', facecolor='white', alpha=0.8)
-            ax.text(0.05, 0.95, annotation_text, transform=ax.transAxes, fontsize=10,
+            ax.text(0.05, 0.95, annotation_text,
+                    transform=ax.transAxes, fontsize=10,
                     verticalalignment='top', bbox=props)
 
             # Enhance grid for better readability
             ax.grid(True, linestyle='--', alpha=0.5)
+
             # Watermark
             ax.text(0.5, 0.5, 'Team 41', transform=ax.transAxes,
                     fontsize=40, color='gray', alpha=0.5,
                     ha='center', va='center')
+
+            # -------------------------------------------------------------------- #
+            # Compute absolute probability for the predicted class
+            # -------------------------------------------------------------------- #
+            class_mask = (filtered_db["MARBLE GROUP"] == predicted_class)
+            X_class = np.column_stack((
+                filtered_db.loc[class_mask, "d18O"],
+                filtered_db.loc[class_mask, "d13C"]
+            ))
+            sample_point = [i1, i2]
+            abs_prob = absolute_probability(X_class[:, 0], X_class[:, 1], sample=sample_point)
+            print("Absolute probability for the predicted class:", abs_prob)
+            print(type(abs_prob))
+            # -------------------------------------------------------------------- #
+
             # Save the plot to a BytesIO object
             img_io = io.BytesIO()
             fig.savefig(img_io, format='png', bbox_inches='tight')
-            plt.close(fig)  # Close the figure to free memory
-            img_io.seek(0)  # Rewind the buffer
+            plt.close(fig)
+            img_io.seek(0)
 
             # Convert the image to a base64 string
             img_base64 = base64.b64encode(img_io.getvalue()).decode('utf-8')
 
-            # Prepare the response body with the base64-encoded image, top classes and their probabilities
+            # Prepare response
             response_body = {
                 'image': img_base64,
-                'classes': top_classes.tolist(), # Use tolist() to make it more compatible with json
-                'probabilities': top_probabilities.tolist() # Used in frontend to calculate if top probability is >= 60%
+                'classes': list(clf.classes_),
+                'probabilities': probabilities.tolist(),
+                'absolute': np.round(abs_prob*100, 2)
             }
 
-            # Return the response with proxy integration support
             return {
                 'statusCode': 200,
                 'headers': headers,
                 'body': json.dumps(response_body)
             }
+
         else:
             # If i1 or i2 is missing
             response_body = {
@@ -250,9 +254,8 @@ def handler(event, context):
                 'headers': headers,
                 'body': json.dumps(response_body)
             }
-    
+
     # If neither 'getImage' nor 'i1' and 'i2' are present, return an error message
-    #---------------- Maybe needs a new guard? only if i1 and i2 are not present? ----------------#
     response_body = {
         'message': 'Missing required parameters. Provide "getImage" or "i1" and "i2" parameters.'
     }
