@@ -91,7 +91,7 @@ def load_csv_from_s3():
         response = s3.get_object(Bucket=BUCKET_NAME, Key=CSV_KEY)
         data = response['Body'].read().decode('utf-8')
         db = pd.read_csv(io.StringIO(data))
-        db = db.dropna(subset=['d18O', 'd13C', 'MARBLE GROUP'])
+        db = db.dropna(subset=['d18O', 'd13C', 'MARBLE GROUP basic'])
     except Exception as e:
         db = None
 
@@ -143,13 +143,13 @@ def handler(event, context):
 
             # Filter only the requested classes if specified, else use all data
             if items:
-                filtered_db = db[db["MARBLE GROUP"].isin(items)]
+                filtered_db = db[db["MARBLE GROUP basic"].isin(items)]
             else:
                 filtered_db = db.copy()
 
             # Fit LDA to these classes
             X = np.column_stack((filtered_db["d18O"], filtered_db["d13C"]))
-            y = filtered_db["MARBLE GROUP"].values
+            y = filtered_db["MARBLE GROUP basic"].values
             clf = LinearDiscriminantAnalysis()
             clf.fit(X, y)
 
@@ -169,7 +169,7 @@ def handler(event, context):
 
             # Plot each class in the filtered set
             for idx, cls in enumerate(clf.classes_):
-                subset = filtered_db[filtered_db["MARBLE GROUP"] == cls]
+                subset = filtered_db[filtered_db["MARBLE GROUP basic"] == cls]
                 x = subset['d18O']
                 y = subset['d13C']
 
@@ -205,7 +205,7 @@ def handler(event, context):
             # -------------------------------------------------------------------- #
             # Compute absolute probability for the predicted class
             # -------------------------------------------------------------------- #
-            class_mask = (filtered_db["MARBLE GROUP"] == predicted_class)
+            class_mask = (filtered_db["MARBLE GROUP basic"] == predicted_class)
             X_class = np.column_stack((
                 filtered_db.loc[class_mask, "d18O"],
                 filtered_db.loc[class_mask, "d13C"]
