@@ -1,5 +1,6 @@
 import os
 import json
+from matplotlib.patches import Patch
 import io
 import base64
 import boto3
@@ -91,10 +92,7 @@ def load_csv_from_s3():
         data = response['Body'].read().decode('utf-8')
         db = pd.read_csv(io.StringIO(data))
         db = db.dropna(subset=['d18O', 'd13C', 'MARBLE GROUP'])
-        print(f"Successfully loaded data from {BUCKET_NAME}/{CSV_KEY}")
-        print(type(db))
     except Exception as e:
-        print(f"Error loading CSV from S3: {e}")
         db = None
 
 def handler(event, context):
@@ -171,7 +169,6 @@ def handler(event, context):
 
             # Plot each class in the filtered set
             for idx, cls in enumerate(clf.classes_):
-                print(cls)
                 subset = filtered_db[filtered_db["MARBLE GROUP"] == cls]
                 x = subset['d18O']
                 y = subset['d13C']
@@ -185,19 +182,17 @@ def handler(event, context):
 
             # Plot the input point
             ax.scatter([i1], [i2], color='red', edgecolors='k')
+            ax.set_xlim([-12, 2])
+            ax.set_ylim([-4, 6])
+            ax.axhline(y=0, color='black', linewidth=1, linestyle='solid')  # Horizontal line at y=0
+            ax.axvline(x=0, color='black', linewidth=1, linestyle='solid')  # Vertical line at x=0
+            legend_labels = [f"{cls} ({prob * 100:.2f}%)" for cls, prob in zip(clf.classes_, probabilities)]
 
-            # Build annotation text (show predicted class + probability of each class)
-            prob_text = "\n".join(
-                [f"{cls}: {prob * 100:.2f}%" for cls, prob in zip(clf.classes_, probabilities)]
-            )
-            annotation_text = (
-                f"Predicted Class: {predicted_class}\n"
-                f"Probabilities:\n{prob_text}"
-            )
-            props = dict(boxstyle='round', facecolor='white', alpha=0.8)
-            ax.text(0.05, 0.95, annotation_text,
-                    transform=ax.transAxes, fontsize=10,
-                    verticalalignment='top', bbox=props)
+            # Create legend handles
+            legend_handles = [Patch(facecolor=colors(idx), edgecolor='ghostwhite', label=label) for idx, label in enumerate(legend_labels)]
+
+            # Add the legend to the plot
+            ax.legend(handles=legend_handles, title="Relative Probability", loc="best", framealpha=0.6, facecolor="ghostwhite")
 
             # Enhance grid for better readability
             ax.grid(True, linestyle='--', alpha=0.5)
@@ -217,8 +212,6 @@ def handler(event, context):
             ))
             sample_point = [i1, i2]
             abs_prob = absolute_probability(X_class[:, 0], X_class[:, 1], sample=sample_point)
-            print("Absolute probability for the predicted class:", abs_prob)
-            print(type(abs_prob))
             # -------------------------------------------------------------------- #
 
             # Save the plot to a BytesIO object
