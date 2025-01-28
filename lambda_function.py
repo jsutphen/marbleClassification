@@ -186,21 +186,6 @@ def handler(event, context):
             ax.set_ylim([-4, 6])
             ax.axhline(y=0, color='black', linewidth=1, linestyle='solid')  # Horizontal line at y=0
             ax.axvline(x=0, color='black', linewidth=1, linestyle='solid')  # Vertical line at x=0
-            legend_labels = [f"{cls} ({prob * 100:.2f}%)" for cls, prob in zip(clf.classes_, probabilities)]
-
-            # Create legend handles
-            legend_handles = [Patch(facecolor=colors(idx), edgecolor='ghostwhite', label=label) for idx, label in enumerate(legend_labels)]
-
-            # Add the legend to the plot
-            ax.legend(handles=legend_handles, title="Relative Probability", loc="best", framealpha=0.6, facecolor="ghostwhite")
-
-            # Enhance grid for better readability
-            ax.grid(True, linestyle='--', alpha=0.5)
-
-            # Watermark on bottom right
-            ax.text(0.5, 0.05, 'Plot by Marble Signatures; A project at TU Darmstadt', transform=ax.transAxes,
-                    fontsize=14, color='gray', alpha=0.5,
-                    ha='center', va='center')
 
             # -------------------------------------------------------------------- #
             # Compute absolute probability for the predicted class
@@ -213,6 +198,55 @@ def handler(event, context):
             sample_point = [i1, i2]
             abs_prob = absolute_probability(X_class[:, 0], X_class[:, 1], sample=sample_point)
             # -------------------------------------------------------------------- #
+
+            # Create relative probability legend labels
+            legend_labels = [f"{cls} ({prob * 100:.2f}%)" for cls, prob in zip(clf.classes_, probabilities)]
+
+            # Create legend handles for relative probability
+            relative_legend_handles = [
+                Patch(facecolor=colors(idx), edgecolor='ghostwhite', label=label)
+                for idx, label in enumerate(legend_labels)
+            ]
+
+            # Create the absolute probability legend
+            abs_prob_label = f"{predicted_class}: {abs_prob:.4f}"
+
+            # Find the absolute class index for color
+            abs_idx = clf.classes_.index(predicted_class)
+
+            # Create the absolute probability handle
+            abs_legend_handle = Patch(facecolor=colors(abs_idx), edgecolor='ghostwhite', label=abs_prob_label)
+
+            # Add the absolute probability legend in the top-left corner
+            ax.legend(
+                handles=[abs_legend_handle],
+                loc="upper left",
+                framealpha=0.6,
+                facecolor="ghostwhite",
+                title="Absolute Probability",
+                fontsize='small'
+            )
+
+            # The relative probability legend in the top-right corner
+            relative_legend = ax.legend(
+                handles=relative_legend_handles,
+                loc="upper right",
+                framealpha=0.6,
+                facecolor="ghostwhite",
+                title="Relative Probability",
+                fontsize='small'
+            )
+
+            # Add the relative probability legend
+            plt.gca().add_artist(relative_legend)
+
+            # Enhance grid for better readability
+            ax.grid(True, linestyle='--', alpha=0.5)
+
+            # Watermark on bottom right
+            ax.text(0.5, 0.05, 'Plot by Marble Signatures; A project at TU Darmstadt', transform=ax.transAxes,
+                    fontsize=14, color='gray', alpha=0.5,
+                    ha='center', va='center')
 
             # Save the plot to a BytesIO object
             img_io = io.BytesIO()
