@@ -198,9 +198,9 @@ def handler(event, context):
             ax.grid(True, linestyle='--', alpha=0.5)
 
             # Watermark on bottom right
-            ax.text(0.9, 0.1, 'Plot by Marble Signatures; A project at TU Darmstadt', transform=ax.transAxes,
+            ax.text(0.5, 0.05, 'Plot by Marble Signatures; A project at TU Darmstadt', transform=ax.transAxes,
                     fontsize=14, color='gray', alpha=0.5,
-                    ha='center', va='center', rotation=30)
+                    ha='center', va='center')
 
             # -------------------------------------------------------------------- #
             # Compute absolute probability for the predicted class
