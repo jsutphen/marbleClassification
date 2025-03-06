@@ -208,17 +208,17 @@ def handler(event, context):
                 for idx, label in enumerate(legend_labels)
             ]
 
-            # Create the absolute probability legend
+            # Create the absolute probability legend label
             abs_prob_label = f"{predicted_class}: {abs_prob:.4f}"
 
             # Find the absolute class index for color
-            abs_idx = clf.classes_.index(predicted_class)
+            abs_idx = np.where(clf.classes_ == predicted_class)[0][0]
 
             # Create the absolute probability handle
             abs_legend_handle = Patch(facecolor=colors(abs_idx), edgecolor='ghostwhite', label=abs_prob_label)
 
-            # Add the absolute probability legend in the top-left corner
-            ax.legend(
+            # Create the absolute probability legend and add it as an artist
+            abs_legend = ax.legend(
                 handles=[abs_legend_handle],
                 loc="upper left",
                 framealpha=0.6,
@@ -226,9 +226,11 @@ def handler(event, context):
                 title="Absolute Probability",
                 fontsize='small'
             )
+            
+            ax.add_artist(abs_legend)  # Freeze the first legend
 
-            # The relative probability legend in the top-right corner
-            relative_legend = ax.legend(
+            # Now create the relative probability legend normally
+            ax.legend(
                 handles=relative_legend_handles,
                 loc="upper right",
                 framealpha=0.6,
@@ -236,9 +238,6 @@ def handler(event, context):
                 title="Relative Probability",
                 fontsize='small'
             )
-
-            # Add the relative probability legend
-            plt.gca().add_artist(relative_legend)
 
             # Enhance grid for better readability
             ax.grid(True, linestyle='--', alpha=0.5)
