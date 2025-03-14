@@ -1,6 +1,5 @@
-pandas
-openpyxl
-xlrd
 matplotlib
-sklearn
-numpy
+boto3
+pandas
+scikit-learn
+openpyxl
